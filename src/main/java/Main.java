@@ -3,11 +3,8 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.*;
 
-import java.awt.*;
 import java.util.List;
 
 import com.xuggle.mediatool.IMediaReader;
@@ -17,8 +14,8 @@ import com.xuggle.mediatool.event.IVideoPictureEvent;
 import com.xuggle.xuggler.Global;
 import net.sourceforge.tess4j.ITesseract;
 import net.sourceforge.tess4j.Tesseract;
-import net.sourceforge.tess4j.Tesseract1;
 import net.sourceforge.tess4j.TesseractException;
+
 
 /**
  * Using {@link IMediaReader}, takes a media container, finds the first video stream, decodes that
@@ -41,7 +38,7 @@ public class Main extends MediaListenerAdapter {
 
     private static final int STEP = 24;
 
-    public static final double SECONDS_BETWEEN_FRAMES = 1.0/STEP;
+    public static final double SECONDS_BETWEEN_FRAMES = 1.0 / STEP;
 
     /**
      * The number of micro-seconds between frames.
@@ -64,30 +61,7 @@ public class Main extends MediaListenerAdapter {
     private int mVideoStreamIndex = -1;
 
     public static void main(String[] args) {
-        Main main = new Main("src/main/resources/task.mp4");
-        ITesseract tesseract = new Tesseract();
-        tesseract.setDatapath("src/main/resources/tessdata");
-        StringBuilder buffer = new StringBuilder();
-        char c;
-        int j = 0;
-        for (int i = 1; i < main.list.size(); ++i) {
-            if (!imagesIsEqual(main.list.get(i), main.list.get(i - 1))) {
-                try {
-                    c = tesseract.doOCR(main.list.get(i)).charAt(0);
-                    if (!CHARS.contains(c)) {
-                        c = SHIFT.get(c);
-                    }
-                    buffer.append(c);
-                    ImageIO.write(main.list.get(i), "png", new File("test/" + (j++) + ".png"));
-                } catch (TesseractException e) {
-                    //do nothing
-                } catch (IOException e) {
-                    //
-                }
-            }
-        }
-        System.out.println(buffer.toString());
-        Path file;
+        new Main("src/main/resources/task.mp4");
     }
 
     /**
@@ -98,13 +72,47 @@ public class Main extends MediaListenerAdapter {
      */
 
     public Main(String filename) {
-        list = new ArrayList<>();
+        list = new LinkedList<>();
 
         IMediaReader reader = ToolFactory.makeReader(filename);
         reader.setBufferedImageTypeToGenerate(BufferedImage.TYPE_3BYTE_BGR);
         reader.addListener(this);
+        ITesseract tesseract = new Tesseract();
+        tesseract.setDatapath("src/main/resources/tessdata");
+        StringBuilder buffer = new StringBuilder();
+        BufferedImage prev = null;
+        char c;
+        int j = 0;
+        int step = 0;
 
-        while (reader.readPacket() == null) {}
+        while (reader.readPacket() == null || !list.isEmpty()) {
+            while (!list.isEmpty()) {
+                if (!imagesIsEqual(list.get(0), prev)) {
+                    try {
+                        String str = tesseract.doOCR(list.get(0));
+                        c = str.charAt(0);
+                        if (!CHARS.contains(c)) {
+                            c = SHIFT.get(c);
+                        }
+                        if (c == 'Y' && imageIsBlack(list.get(0))) {
+                            c = 'V';
+                        }
+                        if (c == 'V' && imageIsW(list.get(0))) {
+                            c = 'W';
+                        }
+                        buffer.append(c);
+                        //ImageIO.write(list.get(0), "png", new File("test/frame" + (j++) + '_' + c + ".png"));
+                    } catch (TesseractException e) {
+                        //do nothing
+                    } catch (IOException e) {
+                        //
+                    }
+                }
+                System.out.println(step++);
+                prev = list.remove(0);
+            }
+        }
+        System.out.println(LetterCounter.count(buffer.toString()));
     }
 
     /**
@@ -139,19 +147,41 @@ public class Main extends MediaListenerAdapter {
         } catch (Exception e) {
             e.printStackTrace();
         }
+        while (list.size() > 1000) {
+            System.out.print('?');
+        }
     }
 
     static boolean imagesIsEqual(BufferedImage image1, BufferedImage image2) {
-        if (image1.getWidth() == image2.getWidth() && image1.getHeight() == image2.getHeight()) {
-            for (int x = 0; x < image1.getWidth(); x++) {
-                for (int y = 0; y < image1.getHeight(); y++) {
-                    if (image1.getRGB(x, y) != image2.getRGB(x, y))
-                        return false;
-                }
+        if (image2 == null) return true;
+        int diff = 0;
+        for (int x = 0; x < image1.getWidth(); x++) {
+            for (int y = 0; y < image1.getHeight(); y++) {
+                int rgb1 = image1.getRGB(x, y);
+                int rgb2 = image2.getRGB(x, y);
+                int res = Math.max(Math.max(Math.abs((rgb1 & 0xff) - (rgb2 & 0xff)), Math.abs(((rgb1 >> 8) & 0xff) - ((rgb2 >> 8) & 0xff))),
+                        Math.max(Math.abs(((rgb1 >> 16) & 0xff) - ((rgb2 >> 16) & 0xff)), Math.abs(((rgb1 >> 24) & 0xff) - ((rgb2 >> 24) & 0xff))));
+                if (res >= 15)
+                    diff++;
             }
-        } else {
-            return false;
         }
-        return true;
+        return diff * 60 < 256 * 256;
+    }
+
+    static boolean imageIsBlack(BufferedImage image) {
+        int diff = 0;
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                int rgb = image.getRGB(x, y);
+                int res = Math.max(Math.max((rgb & 0xff), ((rgb >> 8) & 0xff)), ((rgb >> 16) & 0xff));
+                if (res < 100) diff++;
+            }
+        }
+        return diff > 0.7 * 256 * 256;
+    }
+
+    static boolean imageIsW(BufferedImage image) throws IOException {
+        BufferedImage imageW = ImageIO.read(new File("src/main/resources/frameW.png"));
+        return imagesIsEqual(image, imageW);
     }
 }
